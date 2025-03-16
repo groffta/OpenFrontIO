@@ -1,7 +1,6 @@
 import { PNG } from "pngjs";
 import * as fs from "fs";
-import { SHA512_256 } from "bun";
-import { timingSafeEqual } from "crypto";
+import { min } from "d3";
 
 export interface EngineConfig {
   width: number;
@@ -84,15 +83,17 @@ export class Engine {
       mountainGain,
     } = this.config;
 
-    // Apply plains ratio
+    const heightOffset = 0.15;
+    const mountainOffset = -0.4;
+    waterLevel = this.lerp(waterLevel, 0.25, 0.75) + heightOffset;
+
     const mountainThreshold = this.lerp(plainsRatio, waterLevel, 0.8);
 
     const map: number[][] = [];
-    const heightOffset = 0.05;
+    const gain = 1.0;
     const baseFrequency = this.lerp(scale, 1, 8);
-    const mountainFrequency = baseFrequency * 8;
+    const mountainFrequency = baseFrequency * 5;
     const lacunarity = 2.0;
-    waterLevel = this.lerp(waterLevel, 0.25, 0.75) + heightOffset;
 
     // Random XY offsets for land and mountain fractals
     const randmax = 0x80000000;
@@ -105,8 +106,8 @@ export class Engine {
       const row: number[] = [];
       for (let x = 0; x < width; x++) {
         // Normalized coords in [-0.5..0.5]
-        let nx = x / width - 0.5 + rx1;
-        let ny = y / height - 0.5 + ry1;
+        let nx = x / Math.min(width, height) - 0.5 + rx1;
+        let ny = y / Math.min(width, height) - 0.5 + ry1;
 
         // --- 1) BASE FRACTAL NOISE ---
         let baseVal = this.fractalNoise(
@@ -123,33 +124,8 @@ export class Engine {
         normalized += heightOffset;
         normalized = Math.max(Math.min(1, normalized), 0);
 
-        // --- 4) Carve Valleys with Worley noise? ---
-        // If terrain is above a threshold, subtract a "branchy" pattern.
-        if (features?.valleys && normalized > valleyThreshold) {
-          // fraction of how far above threshold we are (0..1)
-          const t = (normalized - valleyThreshold) / (1.0 - valleyThreshold);
-          // how strongly to carve at this altitude
-          const carve = valleyCarveFactor * t;
-
-          // Sample Worley noise in [0..1], using a chosen frequency
-          const wVal = this.worleyNoise(nx, ny, worleyFrequency);
-
-          // Subtract a fraction of wVal to carve out valleys
-          // "Bright" areas in Worley => deeper valleys
-          normalized = normalized - carve * wVal;
-
-          // clamp to 0 so we don't go negative
-          if (normalized < 0) normalized = 0;
-        }
-
-        // --- 2) Optionally emphasize mountains globally ---
+        // Use mountains fractal
         if (features?.mountains) {
-          const blendOffset = 0.05;
-          let blendMin = mountainThreshold - blendOffset;
-          let blendMax = mountainThreshold + blendOffset;
-          const t = this.smoothstep(blendMin, blendMax, normalized);
-
-          // Ridged fractal for mountainous region
           let ridgedVal = this.ridgedNoise(
             nx + rx2,
             ny + ry2,
@@ -162,9 +138,16 @@ export class Engine {
           // Scale mountain fractal to waterLevel..1.0
           ridgedVal = this.lerp(ridgedVal, waterLevel, 1.0);
 
-          if (t > 0) {
-            // Blend mountains and lowlands with linear interpolation
+          // Blend mountains and lowlands with linear interpolation
+          const blendOffset = 0.05;
+          let blendMin = mountainThreshold - blendOffset;
+          let blendMax = mountainThreshold + blendOffset;
+          const t = this.smoothstep(blendMin, blendMax, normalized);
+          if (t > 0 && t < 1) {
             normalized = this.lerp(t, normalized, ridgedVal);
+          }
+          if (t >= 1) {
+            normalized = ridgedVal;
           }
         }
 
@@ -174,7 +157,7 @@ export class Engine {
         }
 
         // Convert normalized height to byte [0..255] ---
-        let byteValue = Math.floor(normalized * 255);
+        let byteValue = Math.floor(normalized * 210);
 
         row.push(byteValue);
       }
@@ -237,7 +220,7 @@ export class Engine {
           b = 180;
         }
         // Plains
-        else if (value <= 140 && value !== 106) {
+        else if (value <= 140) {
           r = 191;
           g = 212;
           b = 141;
@@ -297,6 +280,10 @@ export class Engine {
         .on("finish", () => resolve())
         .on("error", (err) => reject(err));
     });
+  }
+
+  public async generateTerrainData(): Promise<Uint8Array> {
+    return new Promise<Uint8Array>((resolve, reject) => {});
   }
 
   // ------------------------------------------------------

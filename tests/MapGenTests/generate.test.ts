@@ -10,15 +10,15 @@ describe("Engine PNG Generation with Transparent Water", () => {
     // Example config
     const randomSeed = Math.floor(Math.random() * 1_000_000_000);
     const config: EngineConfig = {
-      width: 768,
-      height: 768,
+      width: 512,
+      height: 512,
       scale: 0.25,
       octaves: 8,
-      persistence: 0.55,
-      waterLevel: 0.45,
+      persistence: 0.58,
+      waterLevel: 0.5,
       island: false,
-      mountainGain: 20.0,
-      plainsRatio: 0.6,
+      mountainGain: 3.0,
+      plainsRatio: 0.5,
       features: {
         mountains: true,
         water: true,
