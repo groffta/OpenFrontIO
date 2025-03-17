@@ -1,6 +1,7 @@
 import { PNG } from "pngjs";
 import * as fs from "fs";
 import { min } from "d3";
+import { Terrain, TerrainType, packTerrain } from "./Terrain";
 
 export interface EngineConfig {
   width: number;
@@ -44,11 +45,15 @@ export class Engine {
   private config: EngineConfig;
   private permutation: number[];
   private rand: () => number;
+  private normalmap: number[][];
 
   constructor(config: EngineConfig) {
     this.config = config;
     const seed = config.seed ?? Math.floor(Math.random() * 1_000_000);
     this.permutation = this.createPermutationTable(seed);
+    this.normalmap = Array(config.width)
+      .fill(null)
+      .map(() => Array(config.height).fill(null));
   }
 
   public updateConfig(newConfig: Partial<EngineConfig>): void {
@@ -66,126 +71,121 @@ export class Engine {
    *  - optional "island" mask
    *  - optional "carveValleys" using Worley noise
    */
-  public generate(): number[][] {
-    let {
-      width,
-      height,
-      scale,
-      octaves,
-      persistence,
-      waterLevel,
-      island: islandMask,
-      features,
-      valleyThreshold,
-      valleyCarveFactor,
-      worleyFrequency,
-      plainsRatio,
-      mountainGain,
-    } = this.config;
+  public async generate(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let {
+        width,
+        height,
+        scale,
+        octaves,
+        persistence,
+        waterLevel,
+        island: islandMask,
+        features,
+        valleyThreshold,
+        valleyCarveFactor,
+        worleyFrequency,
+        plainsRatio,
+        mountainGain,
+      } = this.config;
 
-    const heightOffset = 0.15;
-    const mountainOffset = -0.4;
-    waterLevel = this.lerp(waterLevel, 0.25, 0.75) + heightOffset;
+      const heightOffset = 0.15;
+      const mountainOffset = -0.4;
+      waterLevel = this.lerp(waterLevel, 0.25, 0.75) + heightOffset;
 
-    const mountainThreshold = this.lerp(plainsRatio, waterLevel, 0.8);
+      const mountainThreshold = this.lerp(plainsRatio, waterLevel, 0.8);
 
-    const map: number[][] = [];
-    const gain = 1.0;
-    const baseFrequency = this.lerp(scale, 1, 8);
-    const mountainFrequency = baseFrequency * 5;
-    const lacunarity = 2.0;
+      const gain = 1.0;
+      const baseFrequency = this.lerp(scale, 1, 8);
+      const mountainFrequency = baseFrequency * 5;
+      const lacunarity = 2.0;
 
-    // Random XY offsets for land and mountain fractals
-    const randmax = 0x80000000;
-    const rx1 = this.rand() / randmax - 0.5;
-    const ry1 = this.rand() / randmax - 0.5;
-    const rx2 = this.rand() / randmax - 0.5;
-    const ry2 = this.rand() / randmax - 0.5;
+      // Random XY offsets for land and mountain fractals
+      const randmax = 0x80000000;
+      const rx1 = this.rand() / randmax - 0.5;
+      const ry1 = this.rand() / randmax - 0.5;
+      const rx2 = this.rand() / randmax - 0.5;
+      const ry2 = this.rand() / randmax - 0.5;
 
-    for (let y = 0; y < height; y++) {
-      const row: number[] = [];
-      for (let x = 0; x < width; x++) {
-        // Normalized coords in [-0.5..0.5]
-        let nx = x / Math.min(width, height) - 0.5 + rx1;
-        let ny = y / Math.min(width, height) - 0.5 + ry1;
+      for (let y = 0; y < height; y++) {
+        const row: number[] = [];
+        for (let x = 0; x < width; x++) {
+          // Normalized coords in [-0.5..0.5]
+          let nx = x / Math.min(width, height) - 0.5 + rx1;
+          let ny = y / Math.min(width, height) - 0.5 + ry1;
 
-        // --- 1) BASE FRACTAL NOISE ---
-        let baseVal = this.fractalNoise(
-          nx,
-          ny,
-          baseFrequency,
-          octaves,
-          lacunarity,
-          persistence,
-        );
-        // Range ~[-1..1], convert to [0..1] for easier threshold checks
-        let normalized = (baseVal + 1) / 2;
-        // Apply height offset and clamp to [0..1]
-        normalized += heightOffset;
-        normalized = Math.max(Math.min(1, normalized), 0);
-
-        // Use mountains fractal
-        if (features?.mountains) {
-          let ridgedVal = this.ridgedNoise(
-            nx + rx2,
-            ny + ry2,
-            mountainFrequency,
-            6,
-            3.0,
-            mountainGain,
+          // --- 1) BASE FRACTAL NOISE ---
+          let baseVal = this.fractalNoise(
+            nx,
+            ny,
+            baseFrequency,
+            octaves,
+            lacunarity,
+            persistence,
           );
+          // Range ~[-1..1], convert to [0..1] for easier threshold checks
+          let normalized = (baseVal + 1) / 2;
+          // Apply height offset and clamp to [0..1]
+          normalized += heightOffset;
+          normalized = Math.max(Math.min(1, normalized), 0);
 
-          // Scale mountain fractal to waterLevel..1.0
-          ridgedVal = this.lerp(ridgedVal, waterLevel, 1.0);
+          // Use mountains fractal
+          if (features?.mountains) {
+            let ridgedVal = this.ridgedNoise(
+              nx + rx2,
+              ny + ry2,
+              mountainFrequency,
+              6,
+              3.0,
+              mountainGain,
+            );
 
-          // Blend mountains and lowlands with linear interpolation
-          const blendOffset = 0.05;
-          let blendMin = mountainThreshold - blendOffset;
-          let blendMax = mountainThreshold + blendOffset;
-          const t = this.smoothstep(blendMin, blendMax, normalized);
-          if (t > 0 && t < 1) {
-            normalized = this.lerp(t, normalized, ridgedVal);
+            // Scale mountain fractal to waterLevel..1.0
+            ridgedVal = this.lerp(ridgedVal, waterLevel, 1.0);
+
+            // Blend mountains and lowlands with linear interpolation
+            const blendOffset = 0.05;
+            let blendMin = mountainThreshold - blendOffset;
+            let blendMax = mountainThreshold + blendOffset;
+            const t = this.smoothstep(blendMin, blendMax, normalized);
+            if (t > 0 && t < 1) {
+              normalized = this.lerp(t, normalized, ridgedVal);
+            }
+            if (t >= 1) {
+              normalized = ridgedVal;
+            }
           }
-          if (t >= 1) {
-            normalized = ridgedVal;
+
+          // set heights below water level to 0
+          if (features?.water && normalized <= waterLevel) {
+            normalized = 0;
           }
+
+          this.normalmap[y][x] = normalized;
         }
-
-        // set heights below water level to 0
-        if (features?.water && normalized <= waterLevel) {
-          normalized = 0;
-        }
-
-        // Convert normalized height to byte [0..255] ---
-        let byteValue = Math.floor(normalized * 210);
-
-        row.push(byteValue);
       }
-      map.push(row);
-    }
-
-    return map;
+      resolve();
+    });
   }
 
   /**
-   * Generate a PNG file from the current configuration.
-   * Water-level pixels => transparent alpha.
+   * Generate a greyscale PNG file from the current configuration.
+   * Water pixels => transparent alpha.
    */
-  public async generatePng(outputPath: string): Promise<void> {
+  public async createPng(outputPath: string): Promise<void> {
     const { width, height, waterLevel } = this.config;
-    const heightmap = this.generate();
 
     const png = new PNG({ width, height });
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2;
-        const value = heightmap[y][x];
+        const value = Math.floor(this.normalmap[y][x] * 210);
 
         // Greyscale
         png.data[idx + 0] = value; // R
         png.data[idx + 1] = value; // G
         png.data[idx + 2] = value; // B
-        // If at or below water, alpha=0 => transparent
+        // tranperent if height is 0
         png.data[idx + 3] = value == 0 ? 0 : 255;
       }
     }
@@ -199,9 +199,11 @@ export class Engine {
     });
   }
 
-  public async generateTerrainPng(outputPath: string): Promise<void> {
+  /**
+   * Colorized terrain PNG to visualize terrain generation
+   **/
+  public async createTerrainPng(outputPath: string): Promise<void> {
     const { width, height } = this.config;
-    const heightmap = this.generate();
 
     // Create PNG with RGB channels
     const png = new PNG({ width, height });
@@ -209,12 +211,12 @@ export class Engine {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2;
-        const value = heightmap[y][x];
+        const value = Math.floor(this.normalmap[y][x] * 210);
 
         let r: number, g: number, b: number;
 
         // Water
-        if (value === 0 || value < 20) {
+        if (value === 0) {
           r = 70;
           g = 132;
           b = 180;
@@ -239,7 +241,7 @@ export class Engine {
           b = value % 2 ? value + 1 : value;
           const magnitude = (b - 140) / 2;
 
-          r = 200 + magnitude * 2;
+          r = 190 + magnitude * 2;
           g = 183 + magnitude * 2;
           b = b;
         }
@@ -282,8 +284,23 @@ export class Engine {
     });
   }
 
-  public async generateTerrainData(): Promise<Uint8Array> {
-    return new Promise<Uint8Array>((resolve, reject) => {});
+  public async toTerrainMap(): Promise<Terrain[][]> {
+    return new Promise<Terrain[][]>((resolve, reject) => {
+      let { width, height } = this.config;
+      const terrain: Terrain[][] = Array(width)
+        .fill(null)
+        .map(() => Array(height).fill(null));
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const value = Math.floor(this.normalmap[y][x] * 210);
+          terrain[x][y] = new Terrain(
+            value > 0 ? TerrainType.Land : TerrainType.Water,
+          );
+        }
+      }
+      resolve(terrain);
+    });
   }
 
   // ------------------------------------------------------

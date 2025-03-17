@@ -4,41 +4,26 @@ import fs from "fs/promises";
 import { createReadStream } from "fs";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const maps = [
-  "Africa",
-  "Asia",
-  "WorldMap",
-  "BlackSea",
-  "Europe",
-  "Mars",
-  "Mena",
-  "Oceania",
-  "NorthAmerica",
-  "SouthAmerica",
-];
 const min_island_size = 30;
 
-interface Coord {
+export interface Coord {
   x: number;
   y: number;
 }
 
-enum TerrainType {
+export enum TerrainType {
   Land,
   Water,
 }
 
-class Terrain {
+export class Terrain {
   public shoreline: boolean = false;
   public magnitude: number = 0;
   public ocean: boolean = false;
   constructor(public type: TerrainType) {}
 }
 
-async function loadTerrainMap(mapName: string): Promise<void> {
+export async function loadTerrainMap(mapName: string): Promise<void> {
   const imagePath = path.resolve(
     __dirname,
     "..",
@@ -91,7 +76,7 @@ async function loadTerrainMap(mapName: string): Promise<void> {
     "maps",
     mapName + ".bin",
   );
-  fs.writeFile(outputPath, packTerrain(mapName, terrain));
+  fs.writeFile(outputPath, packTerrain(terrain));
 
   const miniTerrain = await createMiniMap(terrain);
   const miniOutputPath = path.join(
@@ -102,11 +87,7 @@ async function loadTerrainMap(mapName: string): Promise<void> {
     "maps",
     mapName + "Mini.bin",
   );
-  fs.writeFile(miniOutputPath, packTerrain(mapName, miniTerrain));
-}
-
-export async function loadTerrainMaps() {
-  await Promise.all(maps.map((map) => loadTerrainMap(map)));
+  fs.writeFile(miniOutputPath, packTerrain(miniTerrain));
 }
 
 export async function createMiniMap(tm: Terrain[][]): Promise<Terrain[][]> {
@@ -225,12 +206,12 @@ function processOcean(map: Terrain[][]) {
   }
 }
 
-function packTerrain(mapName: string, map: Terrain[][]): Uint8Array {
+export function packTerrain(map: Terrain[][]): Uint8Array {
   const width = map.length;
   const height = map[0].length;
   const packedData = new Uint8Array(4 + width * height);
 
-  // Add width and height to the first 4 bytes
+  // Add width and height to the first 4 bytes as a pair of LE Uint16
   packedData[0] = width & 0xff;
   packedData[1] = (width >> 8) & 0xff;
   packedData[2] = height & 0xff;
@@ -262,7 +243,6 @@ function packTerrain(mapName: string, map: Terrain[][]): Uint8Array {
       packedData[4 + y * width + x] = packedByte;
     }
   }
-  logBinaryAsBits(mapName, packedData);
   return packedData;
 }
 
@@ -368,5 +348,3 @@ function getNeighborCoords(x: number, y: number, map: Terrain[][]): Coord[] {
   }
   return coords;
 }
-
-await loadTerrainMaps();
