@@ -2,6 +2,24 @@ import { consolex } from "../Consolex";
 import { Cell, GameMapType, TerrainType } from "./Game";
 import { GameMap, GameMapImpl } from "./GameMap";
 import { terrainMapFileLoader } from "./TerrainMapFileLoader";
+import { Engine, EngineConfig } from "../../core/mapgen/Engine";
+import { createMiniMap, packTerrain, Terrain } from "../../core/mapgen/Terrain";
+
+export const defaultMapConfig: EngineConfig = {
+  width: 800,
+  height: 512,
+  scale: 0.2,
+  octaves: 8,
+  persistence: 0.58,
+  waterLevel: 0.35,
+  mountainGain: 3.0,
+  plainsRatio: 0.7,
+  features: {
+    mountains: true,
+    water: true,
+  },
+  seed: 35768321684, //Math.floor(Math.random()*1000000),
+};
 
 const loadedMaps = new Map<
   GameMapType,
@@ -22,12 +40,46 @@ export interface Nation {
   strength: number;
 }
 
+export async function generateCustomMap(
+  config: EngineConfig,
+): Promise<{ gameMap; miniGameMap; nationMap }> {
+  const mapEngine = new Engine(config);
+  await mapEngine.generate();
+  const terrain = await mapEngine.getTerrain();
+
+  // convert packed Uint8 binary to char string
+  // Convert to string more safely
+  const mapBin = Array.from(packTerrain(terrain))
+    .map((b) => String.fromCharCode(b))
+    .join("");
+
+  return {
+    gameMap: await loadTerrainFromFile(mapBin),
+    miniGameMap: await loadTerrainFromFile(mapBin),
+    nationMap: {
+      name: "Custom",
+      width: config.width,
+      height: config.height,
+      nations: [],
+    },
+  };
+}
+
 export async function loadTerrainMap(
   map: GameMapType,
 ): Promise<{ nationMap: NationMap; gameMap: GameMap; miniGameMap: GameMap }> {
+  // Procedurally generate and load map
+  if (map === GameMapType.Custom) {
+    return generateCustomMap({
+      seed: Math.floor(Math.random() * 1000000),
+      ...defaultMapConfig,
+    });
+  }
+
   if (loadedMaps.has(map)) {
     return loadedMaps.get(map);
   }
+
   const mapFiles = await terrainMapFileLoader.getMapData(map);
 
   const gameMap = await loadTerrainFromFile(mapFiles.mapBin);

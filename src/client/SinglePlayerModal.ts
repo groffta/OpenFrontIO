@@ -6,8 +6,6 @@ import { consolex } from "../core/Consolex";
 import "./components/Difficulties";
 import { DifficultyDescription } from "./components/Difficulties";
 import "./components/Maps";
-import randomMap from "../../resources/images/RandomMap.png";
-import { GameInfo } from "../core/Schemas";
 import { JoinLobbyEvent } from "./Main";
 
 @customElement("single-player-modal")
@@ -21,6 +19,7 @@ export class SinglePlayerModal extends LitElement {
   @state() private infiniteTroops: boolean = false;
   @state() private instantBuild: boolean = false;
   @state() private useRandomMap: boolean = false;
+  @state() private useProcedural: boolean = false;
 
   static styles = css`
     .modal-overlay {
@@ -287,27 +286,13 @@ export class SinglePlayerModal extends LitElement {
                       >
                         <map-display
                           .mapKey=${key}
-                          .selected=${!this.useRandomMap &&
-                          this.selectedMap === value}
+                          .selected=${!(
+                            this.useRandomMap || this.useProcedural
+                          ) && this.selectedMap === value}
                         ></map-display>
                       </div>
                     `,
                   )}
-                <div
-                  class="option-card random-map ${this.useRandomMap
-                    ? "selected"
-                    : ""}"
-                  @click=${this.handleRandomMapToggle}
-                >
-                  <div class="option-image">
-                    <img
-                      src=${randomMap}
-                      alt="Random Map"
-                      style="width:100%; aspect-ratio: 4/2; object-fit:cover; border-radius:8px;"
-                    />
-                  </div>
-                  <div class="option-card-title">Random</div>
-                </div>
               </div>
             </div>
 
@@ -434,15 +419,24 @@ export class SinglePlayerModal extends LitElement {
 
   private handleRandomMapToggle() {
     this.useRandomMap = true;
+    this.useProcedural = false;
   }
+
+  private handleProceduralToggle() {
+    this.useProcedural = true;
+    this.useRandomMap = false;
+  }
+
   private handleMapSelection(value: GameMapType) {
     this.selectedMap = value;
     this.useRandomMap = false;
+    this.useProcedural = false;
   }
 
   private handleDifficultySelection(value: Difficulty) {
     this.selectedDifficulty = value;
   }
+
   private handleBotsChange(e: Event) {
     const value = parseInt((e.target as HTMLInputElement).value);
     if (isNaN(value) || value < 0 || value > 400) {

@@ -9,6 +9,8 @@ import africa from "../../../resources/maps/Africa.png";
 import asia from "../../../resources/maps/Asia.png";
 import mars from "../../../resources/maps/Mars.png";
 import britannia from "../../../resources/maps/Britannia.png";
+import custom from "../../../resources/images/CustomMap.png";
+import random from "../../../resources/images/RandomMap.png";
 
 import { GameMapType } from "../../core/game/Game";
 
@@ -36,6 +38,10 @@ export function getMapsImage(map: GameMapType): string {
       return mars;
     case GameMapType.Britannia:
       return britannia;
+    case GameMapType.Custom:
+      return custom;
+    case GameMapType.Random:
+      return random;
     default:
       return "";
   }

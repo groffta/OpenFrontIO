@@ -50,6 +50,8 @@ export enum GameMapType {
   Asia = "Asia",
   Mars = "Mars",
   Britannia = "Britannia",
+  Custom = "Custom",
+  Random = "Random",
 }
 
 export enum GameType {

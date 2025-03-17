@@ -6,8 +6,8 @@ import * as fs from "fs";
 const seed = 696969;
 const config: EngineConfig = {
   width: 1024,
-  height: 1024,
-  scale: 0.4,
+  height: 512,
+  scale: 0.2,
   octaves: 8,
   persistence: 0.58,
   waterLevel: 0.5,
@@ -33,7 +33,7 @@ describe("Engine PNG Generation with Transparent Water", () => {
     if (fs.existsSync(outputPath)) {
       fs.unlinkSync(outputPath);
     }
-    await engine.createTerrainPng(outputPath);
+    await engine.createPng(outputPath);
 
     console.log("PNG generated at:", outputPath);
     expect(fs.existsSync(outputPath)).toBe(true);

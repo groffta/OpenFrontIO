@@ -1,7 +1,14 @@
-import { PNG } from "pngjs";
-import * as fs from "fs";
-import { min } from "d3";
-import { Terrain, TerrainType, packTerrain } from "./Terrain";
+import {
+  Terrain,
+  TerrainType,
+  createMiniMap,
+  processShore,
+  processOcean,
+  processDistToLand,
+  packTerrain,
+  removeSmallIslands,
+  removeSmallLakes,
+} from "./Terrain";
 
 export interface EngineConfig {
   width: number;
@@ -26,23 +33,13 @@ export interface EngineConfig {
   features?: {
     mountains?: boolean;
     water?: boolean;
-    valleys?: boolean;
   };
 
-  // Carving parameters
-  // - threshold above which we start carving
-  // - factor controlling how deep to carve
-  // - worleyFrequency controlling "resolution" of the valley pattern
-  valleyThreshold?: number;
-  valleyCarveFactor?: number;
-  worleyFrequency?: number;
-
-  // Optional seed for deterministic noise
-  seed?: number;
+  seed: number;
 }
 
 export class Engine {
-  private config: EngineConfig;
+  public config: EngineConfig;
   private permutation: number[];
   private rand: () => number;
   private normalmap: number[][];
@@ -82,9 +79,6 @@ export class Engine {
         waterLevel,
         island: islandMask,
         features,
-        valleyThreshold,
-        valleyCarveFactor,
-        worleyFrequency,
         plainsRatio,
         mountainGain,
       } = this.config;
@@ -92,6 +86,7 @@ export class Engine {
       const heightOffset = 0.15;
       const mountainOffset = -0.4;
       waterLevel = this.lerp(waterLevel, 0.25, 0.75) + heightOffset;
+      this.config.waterLevel = waterLevel;
 
       const mountainThreshold = this.lerp(plainsRatio, waterLevel, 0.8);
 
@@ -161,7 +156,7 @@ export class Engine {
             normalized = 0;
           }
 
-          this.normalmap[y][x] = normalized;
+          this.normalmap[x][y] = normalized * gain;
         }
       }
       resolve();
@@ -172,119 +167,8 @@ export class Engine {
    * Generate a greyscale PNG file from the current configuration.
    * Water pixels => transparent alpha.
    */
-  public async createPng(outputPath: string): Promise<void> {
-    const { width, height, waterLevel } = this.config;
 
-    const png = new PNG({ width, height });
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const idx = (width * y + x) << 2;
-        const value = Math.floor(this.normalmap[y][x] * 210);
-
-        // Greyscale
-        png.data[idx + 0] = value; // R
-        png.data[idx + 1] = value; // G
-        png.data[idx + 2] = value; // B
-        // tranperent if height is 0
-        png.data[idx + 3] = value == 0 ? 0 : 255;
-      }
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      png
-        .pack()
-        .pipe(fs.createWriteStream(outputPath))
-        .on("finish", () => resolve())
-        .on("error", (err) => reject(err));
-    });
-  }
-
-  /**
-   * Colorized terrain PNG to visualize terrain generation
-   **/
-  public async createTerrainPng(outputPath: string): Promise<void> {
-    const { width, height } = this.config;
-
-    // Create PNG with RGB channels
-    const png = new PNG({ width, height });
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const idx = (width * y + x) << 2;
-        const value = Math.floor(this.normalmap[y][x] * 210);
-
-        let r: number, g: number, b: number;
-
-        // Water
-        if (value === 0) {
-          r = 70;
-          g = 132;
-          b = 180;
-        }
-        // Plains
-        else if (value <= 140) {
-          r = 191;
-          g = 212;
-          b = 141;
-        }
-        // Low Hills
-        else if (value <= 158 && value > 140) {
-          b = value % 2 ? value + 1 : value;
-          const magnitude = (b - 140) / 2;
-
-          r = 190;
-          g = 220 - magnitude * 2;
-          b = b;
-        }
-        // Highlands
-        else if (value >= 159 && value <= 178) {
-          b = value % 2 ? value + 1 : value;
-          const magnitude = (b - 140) / 2;
-
-          r = 190 + magnitude * 2;
-          g = 183 + magnitude * 2;
-          b = b;
-        }
-        // Mountains
-        else if (value >= 179 && value <= 199) {
-          b = value % 2 ? value + 1 : value;
-          const magnitude = (b - 140) / 2;
-
-          r = 230 + magnitude / 2;
-          g = 230 + magnitude / 2;
-          b = 230;
-        }
-        // Peak Mountains
-        else if (value >= 200) {
-          r = 245; // 230 + 15
-          g = 245; // 230 + 15
-          b = 245;
-        }
-        // Fallback (shouldn't occur)
-        else {
-          r = value;
-          g = value;
-          b = value;
-        }
-
-        // Set RGB values
-        png.data[idx] = r; // R
-        png.data[idx + 1] = g; // G
-        png.data[idx + 2] = b; // B
-        png.data[idx + 3] = 255; // Alpha (fully opaque)
-      }
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      png
-        .pack()
-        .pipe(fs.createWriteStream(outputPath))
-        .on("finish", () => resolve())
-        .on("error", (err) => reject(err));
-    });
-  }
-
-  public async toTerrainMap(): Promise<Terrain[][]> {
+  public async getTerrain(): Promise<Terrain[][]> {
     return new Promise<Terrain[][]>((resolve, reject) => {
       let { width, height } = this.config;
       const terrain: Terrain[][] = Array(width)
@@ -293,12 +177,21 @@ export class Engine {
 
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-          const value = Math.floor(this.normalmap[y][x] * 210);
-          terrain[x][y] = new Terrain(
-            value > 0 ? TerrainType.Land : TerrainType.Water,
-          );
+          let normal = this.normalmap[x][y];
+          // scale normals > this.config.waterLevel to 0..255
+          let value = (terrain[x][y] = new Terrain(
+            normal > 0 ? TerrainType.Land : TerrainType.Water,
+          ));
+          const shifted = normal - this.config.waterLevel; // shift waterline to 0
+          const scaled = shifted / (1 - this.config.waterLevel); // scale shifted value 0..1
+          terrain[x][y].magnitude = Math.floor(this.lerp(scaled, 0, 31));
         }
       }
+      removeSmallIslands(terrain);
+      removeSmallLakes(terrain);
+      const shorelineWaters = processShore(terrain);
+      processDistToLand(shorelineWaters, terrain);
+      processOcean(terrain);
       resolve(terrain);
     });
   }
@@ -329,60 +222,6 @@ export class Engine {
     }
     // scale to [-1..1]
     return total / maxValue;
-  }
-
-  // ------------------------------------------------------
-  // WORLEY NOISE (Cellular) for "lightning-like" valleys
-  // ------------------------------------------------------
-  /**
-   * Basic Worley noise in [0..1].
-   * "frequency" scales x,y before computing distances.
-   * Inverted so smaller distances => bigger values (like bright cracks).
-   */
-  private worleyNoise(x: number, y: number, frequency: number): number {
-    x *= frequency;
-    y *= frequency;
-
-    const cellX = Math.floor(x);
-    const cellY = Math.floor(y);
-
-    let minDist = Infinity;
-
-    // Check neighboring cells in a 3x3 block around (cellX, cellY)
-    for (let offsetX = -1; offsetX <= 1; offsetX++) {
-      for (let offsetY = -1; offsetY <= 1; offsetY++) {
-        const fx = cellX + offsetX;
-        const fy = cellY + offsetY;
-
-        // Each cell has a random feature point offset in [0..1]
-        const featureX = fx + this.worleyRandomOffset(fx, fy, 0);
-        const featureY = fy + this.worleyRandomOffset(fx, fy, 1);
-
-        // Distance from (x, y) to this feature point
-        const dx = featureX - x;
-        const dy = featureY - y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < minDist) {
-          minDist = dist;
-        }
-      }
-    }
-
-    // "minDist" typically in [0..~1.4], we clamp to 1.0 for a [0..1] range
-    // Then invert so closer => bigger value
-    const clamped = Math.min(minDist, 1.0);
-    return 1.0 - clamped; // => 1 when distance=0, 0 when distance>=1
-  }
-
-  /**
-   * Use the permutation table to produce a pseudo-random offset in [0..1]
-   * for a given cell (fx, fy) and index (0 or 1).
-   */
-  private worleyRandomOffset(fx: number, fy: number, index: number): number {
-    // Simple hashing approach: combine coords + index, then mod by 256
-    const hashIndex = (fx * 37 + fy * 57 + index * 131) & 255;
-    return this.permutation[hashIndex] / 255.0;
   }
 
   // ------------------------------------------------------
